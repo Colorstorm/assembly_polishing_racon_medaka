@@ -1,6 +1,5 @@
 #!/bin/bash
 # Fabian Friedrich, Dec 2019
-# Colin Davenport Mar 2020
 # Requires miniconda repository ont with medaka, minimap and racon
 # Usage: sbatch run_polish_pipe_SLURM.sh nanopore_reads.fastq contigs.fasta
 
@@ -11,7 +10,7 @@
 #SBATCH --mem 480g
 
 # set run on bigmem node only
-#SBATCH --cpus-per-task 8
+#SBATCH --cpus-per-task 32
 
 # share node
 #SBATCH --share
@@ -31,7 +30,8 @@ ctg=$2
 
 
 #Output directory
-outdir='polished'
+outdir='medaka'
+mkdir $outdir
 
 #temporary path for overlapping file
 tmpovl='tmp.ovl.paf'
@@ -53,7 +53,7 @@ conda activate polishing
 #Polishing iterations
 maxiter=2
 # cpu threads
-threads=8
+threads=32
 
 # Setup initial contig files safely
 cp $ctg tmp.0.fasta
@@ -83,17 +83,45 @@ do
 	echo '#################################################'
 
 	racon -t $threads "$reads" $tmpovl tmp.$h.fasta > tmp.$i.fasta
-
 	#rm tmp.$h.fasta
 done
 
+mv tmp.$(expr $1 -1).fasta racon_out_ctg.fasta
+
+
 echo '#################################################'
 echo 'Finished Minimap and Racon'
+echo '#################################################'
+
+
+
+
+
+echo '#################################################'
 echo 'Starting Medaka'
 echo '#################################################'
 
-#Medaka
-medaka_consensus -i "$reads" -d tmp.$maxiter.fasta -o $outdir -t $threads
+echo "Info: Run Minimap for Medaka"
+tmpsam="medakatmp.sam"
+/mnt/ngsnfs/tools/minimap2/minimap2/minimap2 -a -x map-ont -t $threads racon_out_ctg.fasta  "$reads" > $tmpsam
+
+echo "Converting SAM to BAM"
+x=$tmpsam
+/mnt/ngsnfs/tools/samtools-1.8/samtools view -@ 8 -bhS $x > $x.bam
+/mnt/ngsnfs/tools/samtools-1.8/samtools sort -@ 8 $x.bam -o $x.s.bam
+/mnt/ngsnfs/tools/samtools-1.8/samtools index $x.s.bam
+# remove intermediate unsorted bam
+rm $x.bam
+
+
+conda deactivate
+conda activate medaka
+
+
+#Medaka 0_11_5
+medaka_consensus -i "$reads" -d racon_out_ctg.fasta -o $outdir -t $threads
+
+
 
 echo '#################################################'
 echo 'Finished Medaka'
@@ -105,7 +133,8 @@ echo '#################################################'
 
 #Clean Minimap and Racon up
 rm tmp.ovl.paf
-
+rm $tmpsam
+rm tmp.?.fasta
 
 echo '#################################################'
 echo 'Everything has finished'
